@@ -39,8 +39,9 @@ def parse_args(argv=None):
     )
     p.add_argument("--episodes", type=int, default=100)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--max-seconds", type=float, default=20.0,
-                   help="simulated-time cap per episode")
+    p.add_argument("--max-seconds", type=float, default=15.0,
+                   help="simulated-time cap per episode; also capped by "
+                        "a1_env.MAX_EP_LEN, the limit training truncates at")
     p.add_argument("--checkpoint-dir", type=Path, default=ROOT / "checkpoints")
     p.add_argument("--nav-ckpt", type=Path, default=None)
     p.add_argument("--walk-ckpt", type=Path, default=None)
@@ -63,6 +64,11 @@ def load_policies(args):
     nav.load(nav_path, load_optimizer=False)
     walk.load(walk_path, load_optimizer=False)
     return nav.eval_mode(), walk.eval_mode()
+
+
+def required_turn_deg(goal):
+    """How far the robot must turn from its spawn heading (+X) to face the goal."""
+    return abs(np.degrees(np.arctan2(goal[1], goal[0])))
 
 
 def run_episode(scene, data, nav_ppo, walk_ppo, goal, max_steps):
@@ -98,14 +104,16 @@ def run_episode(scene, data, nav_ppo, walk_ppo, goal, max_steps):
 
         if stand_count >= env.STAND_STEPS:
             return dict(outcome="held", steps=step, reached_step=reached_step,
-                        final_dist=dist, path_len=path_len_at_arrival)
+                        final_dist=dist, path_len=path_len_at_arrival,
+                        turn=required_turn_deg(goal))
         if env.is_fallen(data):
             return dict(outcome="fell", steps=step, reached_step=reached_step,
-                        final_dist=dist, path_len=path_len_at_arrival)
+                        final_dist=dist, path_len=path_len_at_arrival,
+                        turn=required_turn_deg(goal))
 
     return dict(outcome="timeout", steps=max_steps, reached_step=reached_step,
                 final_dist=float(np.linalg.norm(goal - data.xpos[env.TRUNK_BODY_ID][:2])),
-                path_len=path_len_at_arrival)
+                path_len=path_len_at_arrival, turn=required_turn_deg(goal))
 
 
 def summarise(results, dt, episodes):
@@ -140,6 +148,14 @@ def summarise(results, dt, episodes):
                 f"  path efficiency (shortest {shortest:.1f} m / travelled): "
                 f"median {statistics.median(eff):.2f}"
             )
+    lines.append("\n  success by how far the robot must turn to face the goal:")
+    for lo, hi in ((0, 45), (45, 90), (90, 135), (135, 180)):
+        sel = [r for r in results if lo <= r["turn"] < hi or (hi == 180 and r["turn"] == 180)]
+        if not sel:
+            continue
+        n_held = sum(1 for r in sel if r["outcome"] == "held")
+        lines.append(f"    {lo:>3}-{hi:<3} deg  {n_held:>4}/{len(sel):<4} {100 * n_held / len(sel):5.1f}%")
+
     failures = [r["final_dist"] for r in results if r["outcome"] != "held"]
     if failures:
         lines.append(
@@ -162,9 +178,8 @@ def main(argv=None):
     dt = scene.timestep
     max_steps = min(int(args.max_seconds / dt), env.MAX_EP_LEN)
 
-    print(f"evaluating {args.episodes} episodes "
-          f"(seed {args.seed}, cap {args.max_seconds:g}s = {max_steps} steps, deterministic)",
-          flush=True)
+    print(f"evaluating {args.episodes} episodes (seed {args.seed}, "
+          f"cap {max_steps * dt:g}s = {max_steps} steps, deterministic)", flush=True)
 
     results = []
     t0 = time.time()

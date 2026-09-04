@@ -110,7 +110,6 @@ def main(argv=None):
     renderer = mujoco.Renderer(scene.model, height=args.height, width=args.width)
     camera = mujoco.MjvCamera()
     mujoco.mjv_defaultCamera(camera)
-    camera.distance = 3.2
     camera.elevation = -20
     camera.azimuth = 130
 

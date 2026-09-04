@@ -159,7 +159,10 @@ silently producing a garbage policy.
 | `11:13` | 2 | Heading error as (cos, sin) |
 | `13:15` | 2 | Robot yaw as (cos, sin) |
 
-Output: `[forward, turn]`, each squashed to [-1, 1] by a Tanh.
+Output: `[forward, turn]`. The policy *mean* is Tanh-bounded to [-1, 1], which
+is what `evaluate.py` and `watch.py` execute. During training the command is a
+Gaussian sample around that mean and is **not** re-bounded — see
+[Known issues](#known-issues-and-what-id-fix-next).
 
 Angles are fed as (cos, sin) pairs rather than raw radians so the network never
 sees the discontinuity at ±π, where 179° and -179° are adjacent in the world
@@ -281,6 +284,14 @@ pattern in a single frame, is the right formulation.
 action dimensions while `log_prob` sums over them, so the effective entropy
 coefficient is 12× weaker for the walk policy than for the nav policy — an
 accident, not a decision.
+
+**The nav command is unbounded during training.** The actor's Tanh bounds the
+*mean* to [-1, 1], but training executes a Gaussian sample around it, so the
+`[forward, turn]` command the walk policy actually receives can land outside
+[-1, 1] — and it is multiplied into the walk reward. Evaluation uses the mean,
+so the deployed command is bounded and the training/evaluation distributions
+differ slightly. Clipping the sample once, before it is both stored and
+executed, is the fix.
 
 **Beyond the bugs:** the 34.5% timeout rate is the headline weakness, and it is
 concentrated in goals that require a large initial turn. Domain randomisation

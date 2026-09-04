@@ -54,7 +54,7 @@ def main(argv=None):
             "(Or use `python evaluate.py` for a headless benchmark.)"
         )
 
-    import mujoco.viewer
+    from mujoco import viewer as mj_viewer
 
     rng = np.random.default_rng(args.seed)
     scene = env.A1Scene.load(args.scene)
@@ -87,7 +87,7 @@ def main(argv=None):
     print(f"watching — {env.STAND_STEPS} steps inside {env.GOAL_RADIUS} m counts as a hold. "
           f"Close the window to quit.", flush=True)
 
-    with mujoco.viewer.launch_passive(scene.model, data) as viewer:
+    with mj_viewer.launch_passive(scene.model, data) as viewer:
         while viewer.is_running():
             frame_start = time.time()
 

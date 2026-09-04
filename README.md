@@ -17,9 +17,52 @@ at the centre facing +X, so most episodes begin by turning.*
 
 ## Results
 
-<!-- RESULTS_TABLE -->
+600 episodes — 200 each at seeds 0, 1, 2. Deterministic policy (the
+distribution mean, not a sample), goals sampled uniformly on the 3 m ring,
+15 s cap per episode, which is the same truncation limit training uses.
 
-Reproduce any row:
+| | Overall | Range across seeds |
+|---|---|---|
+| **Reached and held the goal** | **61.3%** (368/600) | 59.5 – 64.0% |
+| Reached the goal at all | 62.2% (373/600) | 60.0 – 65.0% |
+| Fell over | 2.0% (12/600) | 1.5 – 2.5% |
+| Ran out of time | 36.7% (220/600) | 34.5 – 38.0% |
+| Median time to reach | 3.7 s | 3.6 – 3.8 s |
+| Path efficiency | 0.97 | 0.97 |
+
+Two things worth reading off that table. The robot almost never falls — 2% —
+so the gait itself is stable. And once it arrives it nearly always stays:
+"reached" and "held" differ by five episodes out of 600. Path efficiency of
+0.97 means the successful runs are within 3% of a straight line to the goal.
+
+So essentially all of the 36.7% failure is one thing, and it is not a
+locomotion problem:
+
+### It cannot turn around
+
+Breaking the same 600 episodes down by how far the robot has to turn from its
+spawn heading to face the goal:
+
+| Turn required | Success | Episodes |
+|---|---|---|
+| 0 – 45° | **100.0%** | 159 |
+| 45 – 90° | **97.2%** | 145 |
+| 90 – 135° | 44.8% | 143 |
+| 135 – 180° | **2.6%** | 153 |
+
+For goals in front of it the policy is perfect. For goals behind it, it fails
+almost every time — and when it fails, the median final distance to the goal is
+**~9 m**, well outside the 3 m ring. It is not stalling or getting stuck. It
+confidently walks off in the wrong direction and keeps going.
+
+That points at the nav policy, not the walk policy, and it is consistent with a
+concrete flaw in the reward: the walk policy's "upright" bonus is yaw-dependent,
+so it quietly pays the robot to keep facing its spawn heading. See
+[Known issues](#known-issues-and-what-id-fix-next). Every episode also starts
+from an identical keyframe at yaw 0, so the policy has never had a reason to
+generalise over starting orientation.
+
+Reproduce any of this:
 
 ```bash
 python evaluate.py --episodes 200 --seed 0
@@ -229,7 +272,7 @@ looking nothing like walking.
 
 ## Training setup
 
-| | |
+| Setting | Value |
 |---|---|
 | Algorithm | PPO, clipped surrogate, separate actor and critic optimisers |
 | Parallel environments | 16 |
@@ -293,11 +336,25 @@ so the deployed command is bounded and the training/evaluation distributions
 differ slightly. Clipping the sample once, before it is both stored and
 executed, is the fix.
 
-**Beyond the bugs:** the 34.5% timeout rate is the headline weakness, and it is
-concentrated in goals that require a large initial turn. Domain randomisation
-(the robot always starts from the identical keyframe at yaw 0), a proper
-train/test split of goal angles, and a learning-rate schedule are the obvious
-next moves.
+**Beyond the bugs:** the 36.7% timeout rate is the headline weakness, and the
+[results breakdown](#it-cannot-turn-around) localises it precisely — success is
+100% for goals ahead and 2.6% for goals behind. In priority order, that is what
+I would work on:
+
+1. **Randomise the initial state.** Every episode resets to the same keyframe
+   at yaw 0, so "turn 170° then walk" is a situation the policy has effectively
+   never had to generalise over. Jittering the spawn yaw is one line and is
+   almost certainly the highest-value change in this list.
+2. **Fix the yaw-dependent uprightness term**, which is a standing bias against
+   turning away from +X, and retrain.
+3. **Reconsider `unwanted_turn_pen`.** It scales with yaw rate squared while
+   `turn_follow_reward` scales linearly, so for small turn commands obeying the
+   command is *net-penalised*: at `turn_cmd = 0.3` and a 1.5 rad/s yaw rate the
+   penalty is 2.36 against a 1.35 reward. It only turns positive above roughly
+   `|turn_cmd| = 0.4`. Plausibly a second, larger contributor to the same
+   failure.
+4. Hold out a band of goal angles as a test set, so this failure mode would have
+   shown up in training rather than in a post-hoc audit.
 
 ## Credits
 

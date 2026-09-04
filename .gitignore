@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Training output — checkpoints here are scratch; promote to checkpoints/ by hand
+runs/
+
+# OS
+.DS_Store
